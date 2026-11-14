@@ -2,8 +2,10 @@
 compare it on held-out problems with what the controller uses (newton-rs),
 the converged barrier optimum and the exact SDP (CVXPY).
 
-    python -m ksos_l2o.train_solver [--data ksos_l2o/data/dual_dataset.npz]
+    python -m ksos_l2o.train_solver [--data ksos_l2o/data/dual_dataset.npz] [--cost lse|plain]
         [--output-dir ksos_l2o/data/sdp_solver] [--newton-steps 5] [--epochs 50] [--eval-only]
+
+--cost picks the f of the dual: the LSE-smoothed costs J (default) or the plain rollout costs J_plain.
 
 Label-free, as in KSOS_L2O: the loss is the dual objective f^T alpha_k of every
 layer, weighted decay^(K - k) (deep supervision). The references are only used
@@ -26,9 +28,11 @@ from .sdp_solver import SolverConfig, init_solver, kernel_and_features, moment_m
 from .train_sampler import plateau_step
 
 
-def load_data(path, val_size, test_size):
+def load_data(path, val_size, test_size, cost="lse"):
     d = np.load(path)
     arrays = {k: d[k] for k in ("x", "J", "J_plain", "context", "qpos", "qvel")}
+    if cost == "plain":
+        arrays["J"] = arrays["J_plain"]
     arrays = {k: v.astype(np.float64) if k in ("x", "J", "context") else v for k, v in arrays.items()}
     n_train = len(arrays["x"]) - val_size - test_size
     split = lambda lo, hi: {k: v[lo:hi] for k, v in arrays.items()}
@@ -81,13 +85,13 @@ def exact_sdp(x, f, cfg):
 def references(test, cfg, cache):
     if cache.exists():
         with np.load(cache) as saved:
-            if saved["x"].shape == test["x"].shape and np.array_equal(saved["x"], test["x"]):
-                return {k: saved[k] for k in saved.files if k != "x"}
+            if all(k in saved.files and np.array_equal(saved[k], test[k]) for k in ("x", "J")):
+                return {k: saved[k] for k in saved.files if k not in ("x", "J")}
     print(f"computing references for {len(test['x'])} test problems (newton-rs, barrier optimum, CVXPY)")
     alpha_rs, _, rs_ms = newton_rs(test["x"], test["J"], cfg)
     refs = {"alpha_rs": alpha_rs, "rs_ms": np.asarray(rs_ms),
             "alpha_opt": barrier_optimum(test["x"], test["J"], cfg), "alpha_sdp": exact_sdp(test["x"], test["J"], cfg)}
-    np.savez(cache, x=test["x"], **refs)
+    np.savez(cache, x=test["x"], J=test["J"], **refs)
     return refs
 
 
@@ -258,15 +262,16 @@ def main(args):
     cfg = replace(SolverConfig(), newton_steps=args.newton_steps)
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    train_set, val_set, test_set, bounds = load_data(args.data, args.val_size, args.test_size)
+    train_set, val_set, test_set, bounds = load_data(args.data, args.val_size, args.test_size, args.cost)
     if not args.eval_only:
-        (out / "config.json").write_text(json.dumps({**cfg.to_dict(), "data": args.data, "context_dim": train_set["context"].shape[1],
+        (out / "config.json").write_text(json.dumps({**cfg.to_dict(), "data": args.data, "cost": args.cost, "context_dim": train_set["context"].shape[1],
                                                      "dim": train_set["x"].shape[2]}, indent=2))
         train(cfg, train_set, val_set, bounds, out, args.epochs, args.steps_per_epoch, args.batch_size, args.lr,
               args.deep_supervision_decay, args.seed)
     template = init_solver(jax.random.PRNGKey(0), train_set["x"].shape[2], train_set["context"].shape[1], cfg)
     params = load_pytree(template, out / "checkpoint.npz")
-    refs = references(test_set, cfg, Path(args.data).with_name("dual_test_references.npz"))
+    suffix = "" if args.cost == "lse" else f"_{args.cost}"
+    refs = references(test_set, cfg, Path(args.data).with_name(f"dual_test_references{suffix}.npz"))
     rows = report(params, cfg, test_set, bounds, refs)
     (out / "report.json").write_text(json.dumps(rows, indent=2))
 
@@ -274,6 +279,7 @@ def main(args):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--data", default="ksos_l2o/data/dual_dataset.npz")
+    p.add_argument("--cost", choices=["lse", "plain"], default="lse", help="f of the dual: J (LSE) or J_plain")
     p.add_argument("--output-dir", default="ksos_l2o/data/sdp_solver")
     p.add_argument("--newton-steps", type=int, default=SolverConfig.newton_steps)
     p.add_argument("--epochs", type=int, default=50)

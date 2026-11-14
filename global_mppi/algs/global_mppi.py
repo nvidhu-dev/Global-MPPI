@@ -107,6 +107,7 @@ class GlobalMPPI(SamplingBasedController):
         self.lse_smoothing_sigma = jnp.array([0.3, 0.2, 0.1, 0.05, 0.001])
         self.mppi_noise = self.lse_smoothing_sigma  # MPPI noise per pass
         self.ksos_warm_start = False  # add the shifted previous plan as a KSOS candidate
+        self.mppi_keep_check = True  # roll out the MPPI mean and keep the start if it is cheaper
         self.lse_lambda = 0.1
 
         # ksos parameters
@@ -510,6 +511,8 @@ class GlobalMPPI(SamplingBasedController):
 
         params = sampled.replace(mean=start, rng=jax.random.split(sampled.rng)[0])
         params = self.update_params(params, rollouts)
+        if not self.mppi_keep_check:  # trust the MPPI mean, skip its rollout
+            return params, rollouts, start_cost, (cand_cost, ksos_cost, jnp.nan, use_cand, False)
         mppi_cost = self.rollout(state, new_tk, params.mean[None]).costs.sum()
         keep = mppi_cost > start_cost
         params = params.replace(mean=jnp.where(keep, start, params.mean))

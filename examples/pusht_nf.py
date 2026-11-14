@@ -48,8 +48,9 @@ parser.add_argument(
 )
 parser.add_argument(
     "--ksos-solver-dir",
-    default="ksos_l2o/data/sdp_solver_k2",
-    help="Output dir of ksos_l2o/train_solver.py (needed for --ksos-solver learned)",
+    default=None,
+    help="Output dir of ksos_l2o/train_solver.py for --ksos-solver learned "
+    "(default: sdp_solver_k2 for --ksos-cost lse, sdp_solver_k2_plain for plain)",
 )
 parser.add_argument(
     "--ksos-sampling",
@@ -151,6 +152,12 @@ parser.add_argument(
     action=argparse.BooleanOptionalAction,
     default=True,
     help="Add the previous plan (shifted in time) as a KSOS candidate",
+)
+parser.add_argument(
+    "--keep-check",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Roll out the MPPI mean and keep the start if it is cheaper (--no-keep-check saves one rollout)",
 )
 parser.add_argument(
     "--exec-physics",
@@ -255,8 +262,10 @@ elif args.algorithm == "globalmppi":
         from ksos_l2o.context import pusht_context
         from ksos_l2o.sdp_solver import load_learned_solver
 
+        solver_dir = args.ksos_solver_dir or {"lse": "ksos_l2o/data/sdp_solver_k2",
+                                              "plain": "ksos_l2o/data/sdp_solver_k2_plain"}[args.ksos_cost]
         learned_solver = load_learned_solver(
-            args.ksos_solver_dir, np.tile(task.u_min, 6), np.tile(task.u_max, 6), pusht_context
+            solver_dir, np.tile(task.u_min, 6), np.tile(task.u_max, 6), pusht_context
         )
     ctrl = GlobalMPPI(
         task,
@@ -276,6 +285,7 @@ elif args.algorithm == "globalmppi":
     )
     ctrl.ksos_num_restart = args.ksos_passes
     ctrl.ksos_warm_start = args.warm_start
+    ctrl.mppi_keep_check = args.keep_check
     ctrl.is_lse_smoothing = args.ksos_cost == "lse"
     if flow_sampler is not None and flow_sigma is not None:
         # use the same LSE sigma as in training for the first pass

@@ -110,7 +110,13 @@ def newton_step(alpha, f, phi, step_size, lambd, tau, kkt_damping, psd_floor):
     direction = newton_direction(alpha, f, phi, lambd, tau, kkt_damping, psd_floor)
     cap = jnp.minimum(1.0, 0.9 * max_step_to_boundary(alpha, direction, phi, lambd, psd_floor))
     updated = alpha + step_size * cap * direction
-    return updated + (1.0 - jnp.sum(updated)) / updated.size
+    return _keep_feasible(updated + (1.0 - jnp.sum(updated)) / updated.size, alpha, phi, lambd, psd_floor)
+
+
+def _keep_feasible(alpha, fallback, phi, lambd, psd_floor):
+    """alpha if it is finite with M(alpha) >= psd_floor I (so the next layer's Cholesky works), else fallback."""
+    ok = jnp.all(jnp.isfinite(alpha)) & (jnp.linalg.eigvalsh(moment_matrix(alpha, phi, lambd))[0] >= psd_floor)
+    return jnp.where(ok, alpha, fallback)
 
 
 def tau_schedule(gamma, tau_start, tau_final):
@@ -174,7 +180,8 @@ def warm_start(params, x, f, kernel, phi, context, lb, ub, cfg):
     direction = logits - jnp.mean(logits)
     direction = direction / (jnp.linalg.norm(direction) + 1e-8)
     alpha = start + cfg.warm_start_fraction * max_step_to_boundary(start, direction, phi, cfg.lambd, cfg.psd_floor) * direction
-    return alpha + (1.0 - jnp.sum(alpha)) / n
+    # start >= 0 always gives M >= lambd I, so it is a feasible fallback
+    return _keep_feasible(alpha + (1.0 - jnp.sum(alpha)) / n, start, phi, cfg.lambd, cfg.psd_floor)
 
 
 # ---- schedule network: step size and tau per layer from the context ----

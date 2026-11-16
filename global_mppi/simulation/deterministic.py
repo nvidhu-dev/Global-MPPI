@@ -12,7 +12,7 @@ from mujoco import mjx
 
 from global_mppi.alg_base import SamplingBasedController
 from global_mppi import ROOT
-from global_mppi.utils.video import VideoRecorder
+from global_mppi.utils.video import VideoRecorder, label_frame
 
 # Timestamp for this process, computed once at import so every seed of a single
 # run shares the same log subfolder: logs/<task>_<algorithm>/<RUN_TIMESTAMP>/.
@@ -38,6 +38,10 @@ class _HeadlessViewer:
     def __init__(self, mj_model: mujoco.MjModel, max_cycles: int) -> None:
         self.cam = mujoco.MjvCamera()
         mujoco.mjv_defaultFreeCamera(mj_model, self.cam)
+        video_cam = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, "video")
+        if video_cam >= 0:  # the scene's recording camera, if it has one
+            self.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+            self.cam.fixedcamid = video_cam
         self.user_scn = mujoco.MjvScene(mj_model, maxgeom=10000)
         self._running = True
 
@@ -279,13 +283,15 @@ def run_interactive(  # noqa: PLR0912, PLR0915
     recorder = None
     if record_video:
         # Video dimensions
-        width, height = 720, 480
+        width, height = 1280, 720
+        mj_model.vis.quality.offsamples = 8  # anti-aliasing
         # Create the video recorder
         recorder = VideoRecorder(
             output_dir=run_log_dir,
             width=width,
             height=height,
             fps=actual_frequency,
+            name=f"seed{current_seed}",
         )
         # Ensure model visual offscreen buffer is compatible with video recording
         mj_model.vis.global_.offwidth = width
@@ -721,11 +727,11 @@ def run_interactive(  # noqa: PLR0912, PLR0915
                 mujoco.mj_step(mj_model, mj_data)
                 viewer.sync()
 
-                # Capture frame if recording
-                if record_video and recorder.is_recording:
-                    renderer.update_scene(mj_data, viewer.cam)
-                    frame = renderer.render()
-                    recorder.add_frame(frame.tobytes())
+            # One frame per replan, so the video plays in real time at actual_frequency fps
+            if record_video and recorder.is_recording:
+                renderer.update_scene(mj_data, viewer.cam)
+                frame = label_frame(renderer.render(), f"seed {current_seed}  t = {mj_data.time:.2f} s")
+                recorder.add_frame(frame.tobytes())
 
             # Try to run in roughly realtime
             elapsed = time.time() - start_time
@@ -774,3 +780,5 @@ def run_interactive(  # noqa: PLR0912, PLR0915
                 }
             )
         wandb_run.finish()
+
+    return recorder.video_path if record_video and recorder is not None else None

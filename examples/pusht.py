@@ -15,6 +15,7 @@ import mujoco
 
 from global_mppi.algs import PredictiveSampling, MPPI, DIAL, GlobalMPPI
 from global_mppi.simulation.deterministic import run_interactive
+from global_mppi.utils.video import concat_videos
 from global_mppi.tasks.pusht import PushT
 """
 Run an interactive simulation of the push-T task with predictive sampling.
@@ -235,6 +236,7 @@ elif args.algorithm == "globalmppi":
         ctrl.mppi_noise = ctrl.mppi_noise.at[0].set(args.mppi_noise)
 
 # Run the interactive simulation
+videos = []
 for trial_idx in args.seeds:
     # Define the model used for simulation
     mj_model = task.mj_model
@@ -246,7 +248,7 @@ for trial_idx in args.seeds:
     mj_data.qvel[:] = 0.0
     mujoco.mj_forward(mj_model, mj_data)
     print(f"\n=== Seed {trial_idx} ===")
-    run_interactive(
+    video = run_interactive(
         ctrl,
         mj_model,
         mj_data,
@@ -263,3 +265,9 @@ for trial_idx in args.seeds:
         headless=args.headless,
         log_l2s=args.log_l2s,
     )
+    if video is not None:
+        videos.append(video)
+
+# One video for the whole run, seeds back to back
+if len(videos) > 1:
+    concat_videos(videos, os.path.join(os.path.dirname(videos[0]), "simulation_all_seeds.mp4"))

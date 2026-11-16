@@ -11,7 +11,7 @@ from mujoco import mjx
 from ksos_tools.solvers import ksos
 from jax import lax
 
-KSOS_SAMPLING_MODES = ("uniform", "gaussian", "linspace", "sobol", "flow")
+KSOS_SAMPLING_MODES = ("uniform", "gaussian", "sobol", "flow")
 
 @dataclass
 class GlobalMPPIParams(SamplingParams):
@@ -177,7 +177,7 @@ class GlobalMPPI(SamplingBasedController):
         previous KSOS mean (or zero on the first iteration) whose radius
         shrinks geometrically with `decay_rate` each iteration. The sampling
         distribution is controlled by `self.ksos_sampling`
-        ("linspace", "uniform", "gaussian", "sobol", or "flow"). With "flow",
+        ("uniform", "gaussian", "sobol", or "flow"). With "flow",
         only the first pass uses the flow, later passes are uniform."""
         rng, sample_rng = jax.random.split(params.rng)
 
@@ -191,17 +191,7 @@ class GlobalMPPI(SamplingBasedController):
             jnp.power(self.decay_rate, params.iter).astype(params.mean.dtype)
             * self.task.u_max
         )
-        if self.ksos_sampling == "linspace":
-            ksos_knots_old = jnp.linspace(
-                center - radius,
-                center + radius,
-                self.ksos_num_samples,
-            )
-            # Shape: [ksos_num_samples, num_knots, nu]
-            ksos_knots_old = ksos_knots_old.reshape(-1, 2)     # shape (24, 2)
-            np.random.shuffle(ksos_knots_old)
-            ksos_knots_old = ksos_knots_old.reshape(30, 6, 2)
-        elif self.ksos_sampling == "uniform":
+        if self.ksos_sampling == "uniform":
             ksos_knots = jax.random.uniform(
                 sample_rng,
                 (
@@ -359,9 +349,9 @@ class GlobalMPPI(SamplingBasedController):
         
         # compute lse smoothed costs
         if self.is_lse_smoothing:
-            params = self.lse_smoothing_rollout(state, tk, knots, params)
+            params = self.lse_smoothing_rollout(state, new_tk, knots, params)
         else:
-            params = self.general_rollout(state, tk, knots, params)
+            params = self.general_rollout(state, new_tk, knots, params)
 
         params = params.replace(rng=rng)
 

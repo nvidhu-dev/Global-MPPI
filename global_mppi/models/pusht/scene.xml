@@ -19,6 +19,8 @@
   <worldbody>
     <light pos="0 0 1"/>
     <geom name="floor" size="0 0 .125" type="plane" material="groundplane"/>
+    <!-- recording camera: looks just past the goal from the front, about 0.57 m away; frames roughly +-0.25 m -->
+    <camera name="video" pos="0 -0.29 0.45" xyaxes="1 0 0 0 0.789 0.614"/>
   </worldbody>
 
 </mujoco>

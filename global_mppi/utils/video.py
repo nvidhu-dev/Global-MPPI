@@ -2,7 +2,11 @@
 
 import os
 import subprocess
+import tempfile
 from datetime import datetime
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 
 class VideoRecorder:
@@ -14,6 +18,7 @@ class VideoRecorder:
         width: int = 720,
         height: int = 480,
         fps: float = 30.0,
+        name: str = "simulation",
     ):
         """Initialize the video recorder.
 
@@ -22,11 +27,13 @@ class VideoRecorder:
             width: Width of the video in pixels.
             height: Height of the video in pixels.
             fps: Frames per second.
+            name: File name prefix; the start time is appended.
         """
         self.output_dir = output_dir
         self.width = width
         self.height = height
         self.fps = fps
+        self.name = name
 
         self.ffmpeg_process = None
         self.video_path = None
@@ -49,7 +56,7 @@ class VideoRecorder:
         # Generate output path with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.video_path = os.path.join(
-            self.output_dir, f"simulation_{timestamp}.mp4"
+            self.output_dir, f"{self.name}_{timestamp}.mp4"
         )
 
         # Check if FFmpeg is available
@@ -156,3 +163,32 @@ class VideoRecorder:
                 pass
             self.is_recording = False
             return False
+
+
+def label_frame(frame: np.ndarray, text: str) -> np.ndarray:
+    """Draw `text` in the top-left corner of an RGB frame."""
+    image = Image.fromarray(frame)
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=max(frame.shape[0] // 24, 12))
+    draw.rectangle(draw.textbbox((8, 6), text, font=font), fill=(0, 0, 0))
+    draw.text((8, 6), text, fill=(255, 255, 255), font=font)
+    return np.asarray(image)
+
+
+def concat_videos(paths, output_path: str, delete_parts: bool = True) -> bool:
+    """Join videos with the same size, fps and codec into one file (no re-encoding)."""
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as listing:
+        listing.writelines(f"file '{os.path.abspath(p)}'\n" for p in paths)
+    try:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+                        "-i", listing.name, "-c", "copy", output_path], check=True)
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        print(f"Warning: could not combine videos ({e}); keeping the per-seed files")
+        return False
+    finally:
+        os.remove(listing.name)
+    if delete_parts:
+        for p in paths:
+            os.remove(p)
+    print(f"Combined {len(paths)} videos into {output_path}")
+    return True
